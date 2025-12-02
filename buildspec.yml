@@ -13,26 +13,37 @@ phases:
   install:
     commands:
       - set -euo pipefail
+      - echo "[install] Checking tools..."
       - aws --version
       - docker --version
 
   pre_build:
     commands:
+      - echo "[pre_build] Caller identity:"
       - aws sts get-caller-identity
+      - echo "[pre_build] Logging into Amazon ECR..."
       - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+      - echo "[pre_build] Ensuring repository exists..."
       - |
         aws ecr describe-repositories --repository-names "$REPO_NAME" --region "$AWS_REGION" >/dev/null 2>&1 \
         || aws ecr create-repository --repository-name "$REPO_NAME" --image-scanning-configuration scanOnPush=true --region "$AWS_REGION"
+      - echo "[pre_build] Repository ready: $IMAGE_URI"
 
   build:
     commands:
-      - echo "Working dir: $CODEBUILD_SRC_DIR"
+      - echo "[build] Working directory: $CODEBUILD_SRC_DIR"
       - ls -la
-      - echo "Building Docker image on $(date)"
+      - echo "[build] Building Docker image on $(date)"
       - docker build -t $IMAGE_NAME:latest .
+      - echo "[build] Tagging image for ECR..."
       - docker tag $IMAGE_NAME:latest $IMAGE_URI:latest
+      - echo "[build] Local images after tagging:"
+      - docker images | sort
 
   post_build:
     commands:
-      - docker images --format '{{.Repository}}:{{.Tag}}' | grep -E "^$IMAGE_URI:latest$" || (echo "Tag missing" && exit 1)
+      - echo "[post_build] Verifying tag exists before push..."
+      - docker images --format '{{.Repository}}:{{.Tag}}' | grep -E "^$IMAGE_URI:latest$" || (echo "ERROR: $IMAGE_URI:latest not found locally" && exit 1)
+      - echo "[post_build] Pushing image to ECR..."
       - docker push $IMAGE_URI:latest
+      - echo "[post_build] Push completed successfully on $(date)"
